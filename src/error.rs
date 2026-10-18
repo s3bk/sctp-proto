@@ -82,8 +82,6 @@ pub enum Error {
     ErrSsnResetRequestParamInvalidLength,
     #[error("reconfig response parameter too short")]
     ErrReconfigRespParamTooShort,
-    #[error("supported address types parameter has an invalid length")]
-    ErrSupportedAddressTypesParamInvalidLength,
     #[error("invalid algorithm type")]
     ErrInvalidAlgorithmType,
 

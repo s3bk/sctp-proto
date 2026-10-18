@@ -3,7 +3,12 @@ use std::time::Instant;
 
 use crate::config::{RTO_INITIAL, RTO_MAX, RTO_MIN};
 
-pub(crate) const ACK_INTERVAL: u64 = 200;
+/// Longest a SACK is held back, in ms (RFC 4960 allows up to 500; the default is 200).
+/// TEMP-INSTR: BITMULE_ACK_MS overrides it.
+pub(crate) fn ack_interval() -> u64 {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| std::env::var("BITMULE_ACK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(200))
+}
 const TIMER_COUNT: usize = 6;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]

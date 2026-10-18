@@ -21,6 +21,7 @@ use crate::chunk::chunk_shutdown_complete::ChunkShutdownComplete;
 use crate::chunk::chunk_type::CT_FORWARD_TSN;
 use crate::config::COMMON_HEADER_SIZE;
 use crate::config::DATA_CHUNK_HEADER_SIZE;
+use crate::config::DEFAULT_SCTP_PORT;
 use crate::config::{ServerConfig, TransportConfig};
 use crate::error::{Error, Result};
 use crate::packet::{CommonHeader, Packet};
@@ -37,7 +38,7 @@ use crate::shared::{AssociationEventInner, AssociationId, EndpointEvent, Endpoin
 use crate::util::{sna16lt, sna32gt, sna32gte, sna32lt, sna32lte};
 use crate::{AssociationEvent, Payload, Side, Transmit};
 use stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamResetError, StreamState};
-use timer::{ACK_INTERVAL, RtoManager, Timer, TimerTable};
+use timer::{RtoManager, Timer, TimerTable, ack_interval};
 
 use crate::association::stream::RecvSendState;
 use alloc::boxed::Box;
@@ -462,9 +463,6 @@ impl Association {
             remote_addr,
             local_ip,
 
-            source_port: config.local_port(),
-            destination_port: config.remote_port(),
-
             my_verification_tag: verification_tag,
             my_next_tsn: initial_tsn,
             my_next_rsn: initial_tsn,
@@ -503,6 +501,9 @@ impl Association {
             local_aid,
             tsn,
         );
+
+        this.source_port = DEFAULT_SCTP_PORT;
+        this.destination_port = DEFAULT_SCTP_PORT;
 
         if side.is_client() {
             let mut init = ChunkInit {
@@ -593,6 +594,8 @@ impl Association {
 
         this.peer_verification_tag = remote_init.initiate_tag;
 
+        this.source_port = DEFAULT_SCTP_PORT;
+        this.destination_port = DEFAULT_SCTP_PORT;
         this.handshake_completed = true;
 
         this.apply_remote_init_params(
@@ -1581,7 +1584,7 @@ impl Association {
         } else if self.delayed_ack_triggered {
             // Will send delayed ack in the next ack timeout
             self.ack_state = AckState::Delay;
-            self.timers.start(Timer::Ack, now, ACK_INTERVAL);
+            self.timers.start(Timer::Ack, now, ack_interval());
         }
     }
 
@@ -2525,13 +2528,13 @@ impl Association {
             }
 
             // RFC 3758 Sec 3.5 C2
-            let mut i = self.advanced_peer_tsn_ack_point.wrapping_add(1);
+            let mut i = self.advanced_peer_tsn_ack_point + 1;
             while let Some(c) = self.inflight_queue.get(i) {
                 if !c.abandoned() {
                     break;
                 }
                 self.advanced_peer_tsn_ack_point = i;
-                i = i.wrapping_add(1);
+                i += 1;
             }
 
             // RFC 3758 Sec 3.5 C3
@@ -2954,14 +2957,13 @@ impl Association {
         &mut self,
         d: &ChunkSelectiveAck,
         now: Instant,
-    ) -> Result<(HashMap<u16, i64>, u32)> {
-        let mut bytes_acked_per_stream = HashMap::new();
+    ) -> Result<(FxHashMap<u16, i64>, u32)> {
+        let mut bytes_acked_per_stream = FxHashMap::default();
 
         // New ack point, so pop all ACKed packets from inflight_queue
         // We add 1 because the "currentAckPoint" has already been popped from the inflight queue
         // For the first SACK we take care of this by setting the ackpoint to cumAck - 1
-        let first_outstanding_tsn = self.cumulative_tsn_ack_point.wrapping_add(1);
-        let mut i = first_outstanding_tsn;
+        let mut i = self.cumulative_tsn_ack_point + 1;
         //log::debug!("[{}] i={} d={}", self.name, i, d.cumulative_tsn_ack);
         while sna32lte(i, d.cumulative_tsn_ack) {
             if let Some(c) = self.inflight_queue.pop(i) {
@@ -2971,7 +2973,7 @@ impl Association {
                     //        with the earliest outstanding TSN for that address, restart the
                     //        T3-rtx timer for that address with its current RTO (if there is
                     //        still outstanding data on that address).
-                    if i == first_outstanding_tsn {
+                    if i == self.cumulative_tsn_ack_point + 1 {
                         // T3 timer needs to be reset. Stop it for now.
                         self.timers.stop(Timer::T3RTX);
                     }
@@ -3020,7 +3022,7 @@ impl Association {
                 return Err(Error::ErrInflightQueueTsnPop);
             }
 
-            i = i.wrapping_add(1);
+            i += 1;
         }
 
         let mut htna = d.cumulative_tsn_ack;
@@ -3028,7 +3030,7 @@ impl Association {
         // Mark selectively acknowledged chunks as "acked"
         for g in &d.gap_ack_blocks {
             for i in g.start..=g.end {
-                let tsn = d.cumulative_tsn_ack.wrapping_add(i as u32);
+                let tsn = d.cumulative_tsn_ack + i as u32;
 
                 let (is_existed, is_acked) = if let Some(c) = self.inflight_queue.get(tsn) {
                     (true, c.acked)
@@ -3176,12 +3178,10 @@ impl Association {
                 htna
             } else {
                 // b) increment for all TSNs reported missing
-                cum_tsn_ack_point
-                    .wrapping_add(self.inflight_queue.len() as u32)
-                    .wrapping_add(1)
+                cum_tsn_ack_point + (self.inflight_queue.len() as u32) + 1
             };
 
-            let mut tsn = cum_tsn_ack_point.wrapping_add(1);
+            let mut tsn = cum_tsn_ack_point + 1;
             while sna32lt(tsn, max_tsn) {
                 if let Some(c) = self.inflight_queue.get_mut(tsn) {
                     if !c.acked && !c.abandoned() && c.miss_indicator < 3 {
@@ -3210,7 +3210,7 @@ impl Association {
                     return Err(Error::ErrTsnRequestNotExist);
                 }
 
-                tsn = tsn.wrapping_add(1);
+                tsn += 1;
             }
         }
 
@@ -3662,10 +3662,7 @@ impl Association {
 
             let mut i = 0;
             loop {
-                let tsn = self
-                    .cumulative_tsn_ack_point
-                    .wrapping_add(i)
-                    .wrapping_add(1);
+                let tsn = self.cumulative_tsn_ack_point + i + 1;
                 if let Some(c) = self.inflight_queue.get_mut(tsn) {
                     if c.acked || c.abandoned() || c.nsent > 1 || c.miss_indicator < 3 {
                         i += 1;
@@ -3830,10 +3827,7 @@ impl Association {
         let mut done = false;
         let mut i = 0;
         while !done {
-            let tsn = self
-                .cumulative_tsn_ack_point
-                .wrapping_add(i)
-                .wrapping_add(1);
+            let tsn = self.cumulative_tsn_ack_point + i + 1;
             if let Some(c) = self.inflight_queue.get_mut(tsn) {
                 if !c.retransmit {
                     i += 1;
@@ -4045,8 +4039,8 @@ impl Association {
     /// This method is called when use_forward_tsn is set to true.
     fn create_forward_tsn(&self) -> ChunkForwardTsn {
         // RFC 3758 Sec 3.5 C4
-        let mut stream_map: HashMap<u16, u16> = HashMap::new(); // to report only once per SI
-        let mut i = self.cumulative_tsn_ack_point.wrapping_add(1);
+        let mut stream_map: FxHashMap<u16, u16> = FxHashMap::default(); // to report only once per SI
+        let mut i = self.cumulative_tsn_ack_point + 1;
         while sna32lte(i, self.advanced_peer_tsn_ack_point) {
             if let Some(c) = self.inflight_queue.get(i) {
                 if let Some(ssn) = stream_map.get(&c.stream_identifier) {
@@ -4061,7 +4055,7 @@ impl Association {
                 break;
             }
 
-            i = i.wrapping_add(1);
+            i += 1;
         }
 
         let mut fwd_tsn = ChunkForwardTsn {
@@ -4229,6 +4223,11 @@ impl Association {
 
             Timer::T3RTX => {
                 self.stats.inc_t3timeouts();
+                if std::env::var_os("BITMULE_SCTP_TRACE").is_some() { // TEMP-INSTR
+                    std::eprintln!("SCTP T3 {} n_rtos={} cwnd={} ssthresh={} inflight_bytes={} inflight_chunks={} rto_ms={} cum_ack={} pending={} stats={:?}",
+                        self.side, n_rtos, self.cwnd, self.ssthresh, self.inflight_queue.get_num_bytes(), self.inflight_queue.len(),
+                        self.rto_mgr.get_rto(), self.cumulative_tsn_ack_point, self.pending_queue.len(), self.stats);
+                }
 
                 // RFC 4960 sec 6.3.3
                 //  E1)  For the destination address for which the timer expires, adjust
@@ -4256,13 +4255,13 @@ impl Association {
                 //  the procedures outlined in C2 - C5.
                 if self.use_forward_tsn {
                     // RFC 3758 Sec 3.5 C2
-                    let mut i = self.advanced_peer_tsn_ack_point.wrapping_add(1);
+                    let mut i = self.advanced_peer_tsn_ack_point + 1;
                     while let Some(c) = self.inflight_queue.get(i) {
                         if !c.abandoned() {
                             break;
                         }
                         self.advanced_peer_tsn_ack_point = i;
-                        i = i.wrapping_add(1);
+                        i += 1;
                     }
 
                     // RFC 3758 Sec 3.5 C3
