@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use crate::queue::reassembly_queue::{Chunks, ReassemblyQueue};
 use crate::{ErrorCauseCode, Side};
 
-use crate::util::{ByteSlice, BytesArray, BytesSource};
+use crate::util::{ByteSlice, BytesArray, BytesSource, OwnedBytes};
 use alloc::vec;
 use alloc::vec::Vec;
 use bytes::Bytes;
@@ -291,6 +291,31 @@ impl<'a> Stream<'a> {
     /// Returns the number of bytes successfully written.
     pub fn write_with_ppi(&mut self, data: &[u8], ppi: PayloadProtocolIdentifier) -> Result<usize> {
         self.write_source(&mut ByteSlice::from_slice(data), ppi)
+    }
+
+    /// Send data on the given stream, taking ownership of the buffer.
+    ///
+    /// Uses the default payload protocol (PPI). The buffer is not copied; it
+    /// is held until the peer acknowledges the data.
+    ///
+    /// Returns the number of bytes successfully written.
+    pub fn write_owned(&mut self, data: Bytes) -> Result<usize> {
+        self.write_owned_with_ppi(data, self.get_default_payload_type()?)
+    }
+
+    /// Send data on the given stream with a specific payload protocol, taking
+    /// ownership of the buffer.
+    ///
+    /// The buffer is not copied; it is held until the peer acknowledges the
+    /// data.
+    ///
+    /// Returns the number of bytes successfully written.
+    pub fn write_owned_with_ppi(
+        &mut self,
+        data: Bytes,
+        ppi: PayloadProtocolIdentifier,
+    ) -> Result<usize> {
+        self.write_source(&mut OwnedBytes::from_bytes(data), ppi)
     }
 
     /// write writes len(p) bytes from p with the default Payload Protocol Identifier

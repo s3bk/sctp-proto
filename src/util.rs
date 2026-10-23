@@ -196,6 +196,43 @@ impl<'a> BytesSource for ByteSlice<'a> {
     }
 }
 
+/// A [`BytesSource`] implementation for an owned [`Bytes`]
+///
+/// The type takes the buffer over and hands out slices of it, so a write from
+/// an owned `Bytes` does not copy the payload.
+pub struct OwnedBytes {
+    /// The buffer handed out in chunks
+    data: Bytes,
+}
+
+impl OwnedBytes {
+    pub fn from_bytes(data: Bytes) -> Self {
+        Self { data }
+    }
+}
+
+impl BytesSource for OwnedBytes {
+    fn pop_chunk(&mut self, limit: usize) -> (Bytes, usize) {
+        let limit = limit.min(self.data.len());
+        if limit == 0 {
+            return (Bytes::new(), 0);
+        }
+
+        let chunk = self.data.split_to(limit);
+
+        let chunks_consumed = if self.data.is_empty() { 1 } else { 0 };
+        (chunk, chunks_consumed)
+    }
+
+    fn has_remaining(&self) -> bool {
+        !self.data.is_empty()
+    }
+
+    fn remaining(&self) -> usize {
+        self.data.len()
+    }
+}
+
 /// A source of one or more buffers which can be converted into `Bytes` buffers on demand
 ///
 /// The purpose of this data type is to defer conversion as long as possible,
@@ -278,6 +315,45 @@ mod test {
     use super::*;
 
     const DIV: isize = 16;
+
+    #[test]
+    fn owned_bytes_hands_out_slices_without_copying() {
+        let data = Bytes::from_static(b"hello world");
+        let mut source = OwnedBytes::from_bytes(data.clone());
+
+        assert_eq!(source.remaining(), 11);
+        assert!(source.has_remaining());
+
+        // A truncated chunk must not be reported as a fully consumed one.
+        let (chunk, consumed) = source.pop_chunk(5);
+        assert_eq!(&chunk[..], b"hello");
+        assert_eq!(chunk.as_ptr(), data.as_ptr());
+        assert_eq!(consumed, 0);
+        assert_eq!(source.remaining(), 6);
+
+        let (chunk, consumed) = source.pop_chunk(6);
+        assert_eq!(&chunk[..], b" world");
+        assert_eq!(chunk.as_ptr(), data[5..].as_ptr());
+        assert_eq!(consumed, 1);
+        assert_eq!(source.remaining(), 0);
+        assert!(!source.has_remaining());
+
+        let (chunk, consumed) = source.pop_chunk(5);
+        assert!(chunk.is_empty());
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn owned_bytes_with_empty_buffer_yields_nothing() {
+        let mut source = OwnedBytes::from_bytes(Bytes::new());
+
+        assert!(!source.has_remaining());
+        assert_eq!(source.remaining(), 0);
+
+        let (chunk, consumed) = source.pop_chunk(5);
+        assert!(chunk.is_empty());
+        assert_eq!(consumed, 0);
+    }
 
     #[test]
     fn test_serial_number_arithmetic32bit() -> Result<()> {

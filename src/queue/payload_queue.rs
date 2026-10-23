@@ -5,12 +5,12 @@ use crate::util::*;
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 #[derive(Default, Debug)]
 pub(crate) struct PayloadQueue {
     // length: usize,
-    chunk_map: HashMap<u32, ChunkPayloadData>,
+    chunk_map: FxHashMap<u32, ChunkPayloadData>,
     pub(crate) sorted: VecDeque<u32>,
     dup_tsn: Vec<u32>,
     n_bytes: usize,

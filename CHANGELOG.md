@@ -1,6 +1,8 @@
 # Unreleased
 
   * Wait for data acknowledgements before resetting streams #80
+  * Add `Stream::write_owned`/`write_owned_with_ppi` and `Chunks::fragments` to avoid copying payloads
+  * Use Fx hashing for the payload queue and the per-SACK stream accounting
 
 # 0.10.7
 

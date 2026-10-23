@@ -542,7 +542,7 @@ fn unordered_abandonment_preserves_next_ordered_message() {
 #[test]
 fn timed_streams_accept_existing_write_methods_after_idle() {
     for unordered in [false, true] {
-        for method in 0..5 {
+        for method in 0..6 {
             let (mut a, mut b) = pairs(ReliabilityType::Timed);
             a.assoc
                 .stream(0)
@@ -560,6 +560,7 @@ fn timed_streams_accept_existing_write_methods_after_idle() {
                 2 => stream.write_sctp(&data, PayloadProtocolIdentifier::Binary),
                 3 => stream.write_chunk(&data),
                 4 => stream.write_chunks(&mut [data.clone()]),
+                5 => stream.write_owned_with_ppi(data.clone(), PayloadProtocolIdentifier::Binary),
                 _ => unreachable!(),
             };
             assert_eq!(written.unwrap(), data.len());

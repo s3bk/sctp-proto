@@ -3585,7 +3585,9 @@ fn test_cumulative_sack_wraps_tsn() -> Result<()> {
             now,
         )?;
 
-        assert_eq!(bytes_acked, HashMap::from([(1, 14)]));
+        let mut expected = FxHashMap::default();
+        expected.insert(1, 14);
+        assert_eq!(bytes_acked, expected);
         assert_eq!(htna, ack_tsn);
         assert_eq!(a.outbound_queue.inflight_len(), 1);
         assert!(
@@ -3618,7 +3620,9 @@ fn test_gap_sack_wraps_tsn() -> Result<()> {
         let sack = receiver.create_selective_ack_chunk();
         let (bytes_acked, htna) = sender.process_selective_ack(&sack, now)?;
 
-        assert_eq!(bytes_acked, HashMap::from([(1, 14)]));
+        let mut expected = FxHashMap::default();
+        expected.insert(1, 14);
+        assert_eq!(bytes_acked, expected);
         assert_eq!(htna, cumulative_tsn.wrapping_add(3));
         assert_eq!(sender.outbound_queue.inflight_bytes(), 7);
         for offset in [1, 2, 3] {
@@ -5330,6 +5334,7 @@ fn test_data_channel_stats_acceptance_and_delivery() -> Result<()> {
     stream.write_with_ppi(&[0], PayloadProtocolIdentifier::StringEmpty)?;
     stream.write_with_ppi(b"control", PayloadProtocolIdentifier::Dcep)?;
     stream.write_with_ppi(b"unknown", PayloadProtocolIdentifier::Unknown)?;
+    stream.write_owned_with_ppi(Bytes::from_static(b"owned"), ppi)?;
     stream.write(b"")?;
     let mut buffers = [
         Bytes::new(),
@@ -5339,7 +5344,7 @@ fn test_data_channel_stats_acceptance_and_delivery() -> Result<()> {
     assert_eq!(stream.write_chunks(&mut buffers)?, 5);
     assert_eq!(buffers[2], b"second"[..]);
     let stats = stream.stats()?;
-    assert_eq!((stats.messages_sent, stats.bytes_sent), (7, 13));
+    assert_eq!((stats.messages_sent, stats.bytes_sent), (8, 18));
     assert!(stream.write(&vec![0; 1_000_000]).is_err());
     assert_eq!(stats, stream.stats()?);
 
@@ -5369,6 +5374,11 @@ fn test_data_channel_stats_acceptance_and_delivery() -> Result<()> {
     let mut stream = a.stream(12).unwrap();
     let mut message = stream.read()?.unwrap();
     assert_eq!(message.next(1).unwrap().bytes.len(), 1);
+    let fragments: Vec<_> = message.fragments().cloned().collect();
+    assert_eq!(fragments.len(), 3);
+    assert_eq!(fragments.iter().map(|f| f.len()).sum::<usize>(), 3000);
+    let joined: Vec<u8> = fragments.iter().flat_map(|f| f.iter().copied()).collect();
+    assert_eq!(joined, data.to_vec());
     let mut output = vec![0; 3000];
     message.clone().read(&mut output)?;
     message.read(&mut output)?;

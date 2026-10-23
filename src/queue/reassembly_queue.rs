@@ -59,6 +59,15 @@ impl Chunks {
         l
     }
 
+    /// The message as it was received, one [`Bytes`] per DATA chunk.
+    ///
+    /// Each item is a slice of a buffer the association already holds, so it
+    /// can be cloned without copying the payload. This is the whole message;
+    /// the position advanced by [`Chunks::next`] is not taken into account.
+    pub fn fragments(&self) -> impl Iterator<Item = &Bytes> {
+        self.chunks.iter().map(|c| &c.user_data)
+    }
+
     // Concat all fragments into the buffer
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         let mut n_written = 0;
