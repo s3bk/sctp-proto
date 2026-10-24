@@ -2957,8 +2957,8 @@ impl Association {
         &mut self,
         d: &ChunkSelectiveAck,
         now: Instant,
-    ) -> Result<(HashMap<u16, i64>, u32)> {
-        let mut bytes_acked_per_stream = HashMap::new();
+    ) -> Result<(FxHashMap<u16, i64>, u32)> {
+        let mut bytes_acked_per_stream = FxHashMap::default();
 
         // New ack point, so pop all ACKed packets from inflight_queue
         // We add 1 because the "currentAckPoint" has already been popped from the inflight queue
@@ -4039,7 +4039,7 @@ impl Association {
     /// This method is called when use_forward_tsn is set to true.
     fn create_forward_tsn(&self) -> ChunkForwardTsn {
         // RFC 3758 Sec 3.5 C4
-        let mut stream_map: HashMap<u16, u16> = HashMap::new(); // to report only once per SI
+        let mut stream_map: FxHashMap<u16, u16> = FxHashMap::default(); // to report only once per SI
         let mut i = self.cumulative_tsn_ack_point + 1;
         while sna32lte(i, self.advanced_peer_tsn_ack_point) {
             if let Some(c) = self.inflight_queue.get(i) {
